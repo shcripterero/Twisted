@@ -1,51 +1,85 @@
 --[[
-    Ultimate Twisted Script (v1.22) | By RscriptsX
-    Features:
-    - Fullbright, FPS Boost, Noclip
-    - Car Fly (keyboard + touch buttons)
-    - Car Speed Boost (ground speed slider)
-    - Vehicle Tornado Protection (prevents fling)
-    - My Car ESP (distance label)
-    - Teleport to Car (smooth)
-    - Player ESP (name + distance)
-    - Tornado ESP (distance, wind speed, EF rating)
-    - Probe Autofarm (teleport to tornado every 5 sec)
-    - Tornado Invincibility (prevents damage, fling)
-    - Rayfield GUI (modern, toggleable)
-    - No key required – runs immediately
+    ████████╗██╗    ██╗██╗███████╗████████╗███████╗██████╗ 
+    ╚══██╔══╝██║    ██║██║██╔════╝╚══██╔══╝██╔════╝██╔══██╗
+       ██║   ██║ █╗ ██║██║█████╗     ██║   █████╗  ██║  ██║
+       ██║   ██║███╗██║██║██╔══╝     ██║   ██╔══╝  ██║  ██║
+       ██║   ╚███╔███╔╝██║███████╗   ██║   ███████╗██████╔╝
+       ╚═╝    ╚══╝╚══╝ ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═════╝ 
+    Twisted Ultimate Script (v1.22) | By RscriptsX
+    Features: Fullbright, FPS Boost, Noclip, Car Fly, Car Speed Boost,
+    Tornado Protection, My Car ESP, Teleport to Car, Player ESP, Tornado ESP,
+    Probe Autofarm, Tornado Invincibility, Anti‑Detection, and more.
+    No key required – runs instantly.
 --]]
 
--- Services
+--==================================================================================================
+--                                         SERVICES
+--==================================================================================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 -- Wait for character
 while not LocalPlayer.Character do task.wait() end
 local Camera = workspace.CurrentCamera or workspace:WaitForChild("Camera")
 
--- ============================================================
--- Load Rayfield
--- ============================================================
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+--==================================================================================================
+--                                      ANTI-DETECTION LAYERS
+--==================================================================================================
+-- Randomise variable names each run to avoid static patterns.
+local function randomString(len)
+    local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    local out = ""
+    for _ = 1, len do
+        out = out .. chars:sub(math.random(1, #chars), math.random(1, #chars))
+    end
+    return out
+end
+
+-- Randomise names for GUI elements and physics objects (prevent pattern scanning)
+local randName1 = randomString(12)
+local randName2 = randomString(12)
+local randName3 = randomString(12)
+local randName4 = randomString(12)
+local randName5 = randomString(12)
+
+-- Use pcall to suppress errors (anti‑detection)
+local function safe(fn, ...)
+    local ok, res = pcall(fn, ...)
+    if not ok then return nil end
+    return res
+end
+
+-- Randomised delays for loops to avoid timing patterns
+local function randDelay(min, max)
+    return min + math.random() * (max - min)
+end
+
+--==================================================================================================
+--                                      LOAD RAYFIELD
+--==================================================================================================
+local Rayfield = safe(function()
+    return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+end) or error("Rayfield failed to load")
 
 local Window = Rayfield:CreateWindow({
     Name = "Twisted Script | By RscriptsX",
-    LoadingTitle = "Twisted Script",
+    LoadingTitle = "Loading...",
     LoadingSubtitle = "by RscriptsX",
     Theme = "Amethyst",
-    DisableRayfieldPrompts = false,
+    DisableRayfieldPrompts = true,
     DisableBuildWarnings = true,
     ConfigurationSaving = { Enabled = false },
-    KeySystem = false,  -- No key required
+    KeySystem = false,
 })
 
--- ============================================================
--- Toggle flags and variables
--- ============================================================
+--==================================================================================================
+--                                     FEATURE FLAGS
+--==================================================================================================
 local Flags = {
     Fullbright          = false,
     FpsBoost            = false,
@@ -60,15 +94,69 @@ local Flags = {
     TornadoInvincible   = false,
 }
 
+-- Variables
 local CarFlySpeed = 150
 local CarGroundSpeed = 120
 local TouchFlyForward = false
 local TouchFlyUp = false
 local TouchFlyDown = false
+local _OriginalLighting = {}
+local _FpsBoostConnection = nil
+local myCar = nil
+local flyRoot = nil
 
--- ============================================================
--- Helper: smooth teleport
--- ============================================================
+--==================================================================================================
+--                                    KEY SYSTEM BYPASS
+--==================================================================================================
+-- Destroy the key GUI immediately and block it from reappearing
+local function BypassKey()
+    -- Find and destroy any key GUI
+    local keyGui = LocalPlayer.PlayerGui:FindFirstChild("KeyGui")
+    if keyGui then keyGui:Destroy() end
+
+    -- Watch for newly added key GUI and destroy it
+    local conn = LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
+        if child.Name:lower():match("key") then
+            child:Destroy()
+        end
+    end)
+
+    -- Try to find the remote event used for key verification and override it
+    local keyRemote = nil
+    for _, v in pairs(game:GetDescendants()) do
+        if v:IsA("RemoteEvent") and v.Name:lower():match("key") then
+            keyRemote = v
+            break
+        end
+    end
+    if keyRemote then
+        local oldFire = keyRemote.FireServer
+        keyRemote.FireServer = function(self, ...)
+            local args = {...}
+            if args[1] and tostring(args[1]):match("key") then
+                return true
+            end
+            return oldFire(self, ...)
+        end
+    end
+
+    -- Additionally, override any global key validation function (if exists)
+    if getgenv and getgenv().isKeyValid then
+        getgenv().isKeyValid = true
+    end
+    if getgenv and getgenv().checkKey then
+        getgenv().checkKey = function() return true end
+    end
+
+    return conn
+end
+
+-- Run key bypass
+local keyWatcher = BypassKey()
+
+--==================================================================================================
+--                                    SMOOTH TELEPORT
+--==================================================================================================
 local function smoothTeleport(hrp, targetPos, steps)
     steps = steps or 8
     task.spawn(function()
@@ -83,20 +171,11 @@ local function smoothTeleport(hrp, targetPos, steps)
     end)
 end
 
--- ============================================================
--- Save original lighting for FPS Boost restore
--- ============================================================
-local _OriginalLighting = {}
-local _FpsBoostConnection = nil
-local _CharacterParts = {}  -- for noclip restore
-local myCar = nil
-local flyRoot = nil
-
--- ============================================================
--- GUI elements for mobile car fly (floating buttons)
--- ============================================================
+--==================================================================================================
+--                                    MOBILE FLY BUTTONS
+--==================================================================================================
 local mobileFlyGui = Instance.new("ScreenGui")
-mobileFlyGui.Name = "CarFlyButtons"
+mobileFlyGui.Name = randName1
 mobileFlyGui.ResetOnSpawn = false
 mobileFlyGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -127,7 +206,6 @@ local upBtn = makeButton("▲ UP", UDim2.new(0,0,0,35))
 local downBtn = makeButton("▼ DOWN", UDim2.new(0,0,0,70))
 local exitBtn = makeButton("EXIT CAR", UDim2.new(0,0,0,105), Color3.fromRGB(150,0,0))
 
--- Touch state
 forwardBtn.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         TouchFlyForward = true
@@ -165,11 +243,11 @@ exitBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- My Car ESP label (on‑screen)
--- ============================================================
+--==================================================================================================
+--                                    MY CAR ESP LABEL
+--==================================================================================================
 local myCarLabel = Instance.new("TextLabel")
-myCarLabel.Name = "MyCarESP"
+myCarLabel.Name = randName2
 myCarLabel.Parent = mobileFlyGui
 myCarLabel.BackgroundColor3 = Color3.fromRGB(0,150,150)
 myCarLabel.BackgroundTransparency = 0.5
@@ -179,19 +257,18 @@ myCarLabel.TextSize = 12
 myCarLabel.Size = UDim2.new(0, 80, 0, 30)
 myCarLabel.Visible = false
 
--- ============================================================
--- ESP tables
--- ============================================================
+--==================================================================================================
+--                                    ESP TABLES
+--==================================================================================================
 local playerEsps = {}
 local tornadoEsps = {}
 
--- ============================================================
--- Helper: detect tornado-like parts (filters out fake sensors)
--- ============================================================
+--==================================================================================================
+--                                    TORNADO DETECTION
+--==================================================================================================
 local function isTornadoLike(model)
     local name = model.Name:lower()
     if name:find("tornado") or name:find("funnel") or name:find("wind") then
-        -- Exclude common non‑tornado parts
         local exclude = {"tiv","tv","probe","trap","sensor","radar","screen","warning","watch","siren","intercept","vehicle","radio","detector"}
         for _, e in ipairs(exclude) do
             if name:find(e) then return false end
@@ -207,12 +284,12 @@ local function isTornadoLike(model)
     return false
 end
 
--- ============================================================
--- Tornado ESP scanner (every 2 seconds)
--- ============================================================
+--==================================================================================================
+--                                    TORNADO ESP SCANNER (2 sec)
+--==================================================================================================
 task.spawn(function()
     while true do
-        task.wait(2)
+        task.wait(randDelay(1.8, 2.2))  -- random delay to avoid pattern
         if Flags.TornadoEsp then
             local found = {}
             local clusters = {}
@@ -286,12 +363,12 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- Probe Autofarm (teleport to tornado every 5 sec)
--- ============================================================
+--==================================================================================================
+--                                    PROBE AUTOFARM (5 sec)
+--==================================================================================================
 task.spawn(function()
     while true do
-        task.wait(5)
+        task.wait(randDelay(4.8, 5.2))
         if Flags.ProbeAutofarm and #tornadoEsps > 0 then
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -308,14 +385,14 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- Main RenderStepped loop (all real‑time logic)
--- ============================================================
+--==================================================================================================
+--                                    MAIN RENDER LOOP
+--==================================================================================================
 RunService.RenderStepped:Connect(function()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-    -- ========== Noclip ==========
+    -- Noclip
     if Flags.Noclip and char then
         for _, part in pairs(char:GetDescendants()) do
             if part:IsA("BasePart") then
@@ -324,7 +401,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ========== Fullbright ==========
+    -- Fullbright
     if Flags.Fullbright then
         Lighting.Ambient = Color3.new(1,1,1)
         Lighting.OutdoorAmbient = Color3.new(1,1,1)
@@ -334,7 +411,7 @@ RunService.RenderStepped:Connect(function()
         Lighting.GlobalShadows = false
     end
 
-    -- ========== FPS Boost ==========
+    -- FPS Boost
     if Flags.FpsBoost then
         if not _OriginalLighting.GlobalShadows then
             _OriginalLighting.GlobalShadows = Lighting.GlobalShadows
@@ -370,7 +447,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ========== My Car tracking ==========
+    -- My Car tracking
     if Flags.MyCarEsp then
         local hum = char and char:FindFirstChild("Humanoid")
         if hum and hum.SeatPart then
@@ -387,7 +464,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ========== My Car on‑screen label ==========
+    -- My Car on‑screen label
     if Flags.MyCarEsp and myCar and myCar.Parent then
         local screenPos, onScreen = Camera:WorldToViewportPoint(myCar.Position)
         if onScreen then
@@ -404,13 +481,12 @@ RunService.RenderStepped:Connect(function()
         myCarLabel.Visible = false
     end
 
-    -- ========== Tornado ESP distance update ==========
+    -- Tornado ESP update
     if Flags.TornadoEsp and hrp then
         for _, entry in ipairs(tornadoEsps) do
             if entry.root and entry.esp and entry.textLabel then
                 local dist = math.floor((hrp.Position - entry.root.Position).Magnitude)
                 local ws, ef = "?", "?"
-                -- Try to read wind speed and EF rating from model attributes
                 for _, attr in ipairs({"WindSpeed","Windspeed","windspeed","wind_speed","Speed","TornadoSpeed","MPH"}) do
                     local v = entry.model:GetAttribute(attr)
                     if v and type(v) == "number" then ws = tostring(math.floor(v)) break end
@@ -424,7 +500,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ========== Player ESP ==========
+    -- Player ESP
     if Flags.PlayerEsp and hrp then
         for _, plr in pairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("Head")
@@ -457,19 +533,19 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ========== Car Fly ==========
+    -- Car Fly
     local hum = char and char:FindFirstChild("Humanoid")
     if Flags.CarFly and hum and hum.SeatPart then
         mobileFrame.Visible = true
         local seatRoot = hum.SeatPart.AssemblyRootPart or hum.SeatPart
         flyRoot = seatRoot
 
-        local vel = seatRoot:FindFirstChild("FlyV") or Instance.new("BodyVelocity", seatRoot)
-        vel.Name = "FlyV"
+        local vel = seatRoot:FindFirstChild(randName3) or Instance.new("BodyVelocity", seatRoot)
+        vel.Name = randName3
         vel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 
-        local gyro = seatRoot:FindFirstChild("FlyG") or Instance.new("BodyGyro", seatRoot)
-        gyro.Name = "FlyG"
+        local gyro = seatRoot:FindFirstChild(randName4) or Instance.new("BodyGyro", seatRoot)
+        gyro.Name = randName4
         gyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
         gyro.D = 500
         gyro.P = 50000
@@ -477,7 +553,6 @@ RunService.RenderStepped:Connect(function()
         local dir = Vector3.new(0,0,0)
         local moving = false
 
-        -- Keyboard controls
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then
             dir = dir + Camera.CFrame.LookVector
             moving = true
@@ -490,7 +565,6 @@ RunService.RenderStepped:Connect(function()
             dir = dir - Vector3.new(0,1,0)
             moving = true
         end
-        -- Touch controls
         if TouchFlyForward then
             dir = dir + Camera.CFrame.LookVector
             moving = true
@@ -514,23 +588,21 @@ RunService.RenderStepped:Connect(function()
     else
         mobileFrame.Visible = false
         if flyRoot then
-            if flyRoot:FindFirstChild("FlyV") then flyRoot.FlyV:Destroy() end
-            if flyRoot:FindFirstChild("FlyG") then flyRoot.FlyG:Destroy() end
+            if flyRoot:FindFirstChild(randName3) then flyRoot[randName3]:Destroy() end
+            if flyRoot:FindFirstChild(randName4) then flyRoot[randName4]:Destroy() end
             flyRoot = nil
         end
     end
 
-    -- ========== Car Speed Boost ==========
+    -- Car Speed Boost
     local hum2 = char and char:FindFirstChild("Humanoid")
     if Flags.CarSpeedBoost and hum2 and hum2.SeatPart and not Flags.CarFly then
         local seatRoot2 = hum2.SeatPart.AssemblyRootPart or hum2.SeatPart
-        -- Boost VehicleSeat.MaxSpeed client-side
         if hum2.SeatPart:IsA("VehicleSeat") then
             pcall(function() hum2.SeatPart.MaxSpeed = CarGroundSpeed end)
         end
-        -- Horizontal push
-        local bv = seatRoot2:FindFirstChild("SpeedBoostV") or Instance.new("BodyVelocity", seatRoot2)
-        bv.Name = "SpeedBoostV"
+        local bv = seatRoot2:FindFirstChild(randName5) or Instance.new("BodyVelocity", seatRoot2)
+        bv.Name = randName5
         local lookFlat = Vector3.new(seatRoot2.CFrame.LookVector.X, 0, seatRoot2.CFrame.LookVector.Z)
         if lookFlat.Magnitude > 0 then lookFlat = lookFlat.Unit end
         local pressing = UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) or TouchFlyForward
@@ -545,11 +617,11 @@ RunService.RenderStepped:Connect(function()
         local hum3 = char and char:FindFirstChild("Humanoid")
         if hum3 and hum3.SeatPart then
             local root3 = hum3.SeatPart.AssemblyRootPart or hum3.SeatPart
-            if root3:FindFirstChild("SpeedBoostV") then root3.SpeedBoostV:Destroy() end
+            if root3:FindFirstChild(randName5) then root3[randName5]:Destroy() end
         end
     end
 
-    -- ========== Vehicle Tornado Protection ==========
+    -- Vehicle Tornado Protection
     local humVP = char and char:FindFirstChild("Humanoid")
     if Flags.VehicleWindProtect and humVP and humVP.SeatPart then
         local carRoot = humVP.SeatPart.AssemblyRootPart or humVP.SeatPart
@@ -569,7 +641,7 @@ RunService.RenderStepped:Connect(function()
         end)
     end
 
-    -- ========== Tornado Invincibility ==========
+    -- Tornado Invincibility
     if Flags.TornadoInvincible and hrp then
         pcall(function()
             local v = hrp.AssemblyLinearVelocity
@@ -588,11 +660,10 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ============================================================
--- Build Rayfield UI
--- ============================================================
-
--- Tab: LOCAL
+--==================================================================================================
+--                                      RAYFIELD UI
+--==================================================================================================
+-- Local Tab
 local LocalTab = Window:CreateTab("Local", nil)
 LocalTab:CreateSection("Lighting")
 LocalTab:CreateToggle({ Name = "Fullbright", CurrentValue = false, Callback = function(v) Flags.Fullbright = v end })
@@ -600,7 +671,7 @@ LocalTab:CreateToggle({ Name = "FPS Boost", CurrentValue = false, Callback = fun
 LocalTab:CreateSection("Movement")
 LocalTab:CreateToggle({ Name = "Noclip", CurrentValue = false, Callback = function(v) Flags.Noclip = v end })
 
--- Tab: CAR
+-- Car Tab
 local CarTab = Window:CreateTab("Car", nil)
 CarTab:CreateSection("Car Flight")
 CarTab:CreateToggle({ Name = "Car Fly (W = forward, Space = up, C = down, touch buttons appear)", CurrentValue = false, Callback = function(v) Flags.CarFly = v end })
@@ -618,26 +689,28 @@ CarTab:CreateButton({ Name = "Teleport To Car", Callback = function()
     end
 end })
 
--- Tab: VISUALS
+-- Visuals Tab
 local VisualsTab = Window:CreateTab("Visuals", nil)
 VisualsTab:CreateSection("Player ESP")
 VisualsTab:CreateToggle({ Name = "Player ESP", CurrentValue = false, Callback = function(v) Flags.PlayerEsp = v end })
 VisualsTab:CreateSection("Tornado ESP")
 VisualsTab:CreateToggle({ Name = "Tornado ESP", CurrentValue = false, Callback = function(v) Flags.TornadoEsp = v end })
 
--- Tab: FARM
+-- Farm Tab
 local FarmTab = Window:CreateTab("Farm", nil)
 FarmTab:CreateSection("Probe Autofarm")
 FarmTab:CreateToggle({ Name = "Probe Autofarm (teleport to tornado every 5 sec)", CurrentValue = false, Callback = function(v) Flags.ProbeAutofarm = v end })
 
--- Tab: MISC
+-- Misc Tab
 local MiscTab = Window:CreateTab("Misc", nil)
 MiscTab:CreateSection("Tornado Invincibility")
 MiscTab:CreateToggle({ Name = "Tornado Invincibility (prevents fling, restores health)", CurrentValue = false, Callback = function(v) Flags.TornadoInvincible = v end })
 MiscTab:CreateSection("About")
 MiscTab:CreateLabel("Twisted v1.22 | By RscriptsX")
 MiscTab:CreateLabel("Features: Fullbright, FPS Boost, Noclip, Car Fly + Speed Boost, Vehicle Wind Protection, My Car ESP, Teleport to Car, Player ESP, Tornado ESP, Probe Autofarm, Tornado Invincibility")
+MiscTab:CreateLabel("Anti-detection: Randomized object names, random delays, safe APIs only.")
 
--- ============================================================
--- End of script
--- ============================================================
+--==================================================================================================
+--                                      SCRIPT READY
+--==================================================================================================
+print("Twisted Script by RscriptsX loaded. Use the GUI to toggle features.")
